@@ -16,6 +16,13 @@
 
 package net.sqlcipher;
 
+import android.content.ContentValues;
+import android.content.OperationApplicationException;
+import android.os.Parcel;
+import android.text.TextUtils;
+import android.util.Config;
+import android.util.Log;
+
 import net.sqlcipher.database.SQLiteAbortException;
 import net.sqlcipher.database.SQLiteConstraintException;
 import net.sqlcipher.database.SQLiteDatabase;
@@ -28,16 +35,10 @@ import net.sqlcipher.database.SQLiteStatement;
 
 import java.io.FileNotFoundException;
 import java.io.PrintStream;
+import java.nio.CharBuffer;
 import java.text.Collator;
 import java.util.HashMap;
 import java.util.Map;
-
-import android.content.ContentValues;
-import android.content.OperationApplicationException;
-import android.os.Parcel;
-import android.text.TextUtils;
-import android.util.Config;
-import android.util.Log;
 
 /**
  * Static utility methods for dealing with databases and {@link Cursor}s.
@@ -337,6 +338,38 @@ public class DatabaseUtils {
 	        }
 	        return out;
 	}
+
+    /**
+     * Formats a byte sequence into the literal string format expected by
+     * SQLCipher: hex'HEX ENCODED BYTES' The key data must be 256 bits (32
+     * bytes) wide. The key data will be formatted into a 64 character hex
+     * string with a special prefix and suffix SQLCipher uses to distinguish raw
+     * key data from a password.
+     *
+     * @link http://sqlcipher.net/sqlcipher-api/#key
+     * @param rawKey a 32 byte array
+     * @return the encoded key
+     */
+    public static char[] encodeRawKey(byte[] rawKey) {
+        if (rawKey.length != 32)
+            throw new IllegalArgumentException("provided key not 32 bytes (256 bits) wide");
+
+        final String kPrefix = "x'";
+        final String kSuffix = "'";;
+
+        final char[] key_chars = encodeHex(rawKey, HEX_DIGITS_LOWER);
+        if (key_chars.length != 64)
+            throw new IllegalStateException("encoded key is not 64 bytes wide");
+
+        char[] kPrefix_c = kPrefix.toCharArray();
+        char[] kSuffix_c = kSuffix.toCharArray();
+        CharBuffer cb = CharBuffer.allocate(kPrefix_c.length + kSuffix_c.length + key_chars.length);
+        cb.put(kPrefix_c);
+        cb.put(key_chars);
+        cb.put(kSuffix_c);
+
+        return cb.array();
+    }
 
     private static int getKeyLen(byte[] arr) {
         if (arr[arr.length - 1] != 0) {
@@ -1217,10 +1250,10 @@ public class DatabaseUtils {
     /*
     static public void createDbFromSqlStatements(
             Context context, String dbName, int dbVersion, String sqlStatements) {
-    	
+
     	//TODO TODO TODO what needs ot happen here
         SQLiteDatabase db = context.openOrCreateDatabase(dbName, 0, null);
-        
+
         // TODO: this is not quite safe since it assumes that all semicolons at the end of a line
         // terminate statements. It is possible that a text field contains ;\n. We will have to fix
         // this if that turns out to be a problem.

@@ -16,12 +16,15 @@
 
 package net.sqlcipher.database;
 
+import android.content.Context;
+import android.util.Log;
+
+import net.sqlcipher.DatabaseUtils;
+import net.sqlcipher.database.SQLiteDatabase.CursorFactory;
+
 import java.io.File;
 
-import android.content.Context;
-import net.sqlcipher.database.SQLiteDatabaseHook;
-import net.sqlcipher.database.SQLiteDatabase.CursorFactory;
-import android.util.Log;
+import javax.crypto.SecretKey;
 
 /**
  * A helper class to manage database creation and version management.
@@ -43,7 +46,7 @@ public abstract class SQLiteOpenHelper {
 
     private SQLiteDatabase mDatabase = null;
     private boolean mIsInitializing = false;
-    
+
     /**
      * Create a helper object to create, open, and/or manage a database.
      * The database is not actually created or opened until one of
@@ -58,7 +61,7 @@ public abstract class SQLiteOpenHelper {
     public SQLiteOpenHelper(Context context, String name, CursorFactory factory, int version) {
         this(context, name, factory, version, null);
     }
-    
+
     /**
      * Create a helper object to create, open, and/or manage a database.
      * The database is not actually created or opened until one of
@@ -85,20 +88,89 @@ public abstract class SQLiteOpenHelper {
     /**
      * Create and/or open a database that will be used for reading and writing.
      * Once opened successfully, the database is cached, so you can call this
+     * method every time you need to write to the database. Make sure to call
+     * {@link #close} when you no longer need it.
+     * <p>
+     * With this method, the key is used directly for encryption. Be sure to
+     * derive your key using a strong key derivation method! If you are in
+     * doubt, use {@link #getWritableDatabase(char[])} which triggers a key to
+     * be derived from the supplied password.
+     * <p>
+     * Errors such as bad permissions or a full disk may cause this operation to
+     * fail, but future attempts may succeed if the problem is fixed.
+     * </p>
+     *
+     * @param key an AES key used directly as the encryption key
+     * @throws SQLiteException if the database cannot be opened for writing
+     * @return a read/write database object valid until {@link #close} is called
+     * @see #getWritableDatabase(char[])
+     * @see #getWritableDatabase(byte[])
+     */
+    public synchronized SQLiteDatabase getWritableDatabase(SecretKey key) {
+        return getWritableDatabase(key.getEncoded());
+    }
+
+    /**
+     * Create and/or open a database that will be used for reading and writing.
+     * Once opened successfully, the database is cached, so you can call this
+     * method every time you need to write to the database. Make sure to call
+     * {@link #close} when you no longer need it.
+     * <p>
+     * With this method, the key is used directly for encryption. Be sure to
+     * derive your key using a strong key derivation method! If you are in
+     * doubt, use {@link #getWritableDatabase(char[])} which triggers a key to
+     * be derived from the supplied password.
+     * <p>
+     * Errors such as bad permissions or a full disk may cause this operation to
+     * fail, but future attempts may succeed if the problem is fixed.
+     * </p>
+     *
+     * @param key an AES key used directly as the encryption key
+     * @throws SQLiteException if the database cannot be opened for writing
+     * @return a read/write database object valid until {@link #close} is called
+     * @see #getWritableDatabase(char[])
+     * @see #getWritableDatabase(SecretKey)
+     */
+    public synchronized SQLiteDatabase getWritableDatabase(byte[] rawKey) {
+        return getWritableDatabase(DatabaseUtils.encodeRawKey(rawKey));
+    }
+
+    /**
+     * Create and/or open a database that will be used for reading and writing.
+     * Once opened successfully, the database is cached, so you can call this
+     * method every time you need to write to the database. Make sure to call
+     * {@link #close} when you no longer need it.
+     * <p>
+     * {@link #getWritableDatabase(char[])} is the preferred version of this
+     * method because a char[] can be zeroed out after use. A {@code String} is
+     * immutable.
+     * <p>
+     * Errors such as bad permissions or a full disk may cause this operation to
+     * fail, but future attempts may succeed if the problem is fixed.
+     * </p>
+     *
+     * @param password a Unicode string used to derive the key
+     * @throws SQLiteException if the database cannot be opened for writing
+     * @return a read/write database object valid until {@link #close} is called
+     * @see #getWritableDatabase(char[])
+     */
+    public synchronized SQLiteDatabase getWritableDatabase(String password) {
+        return getWritableDatabase(password.toCharArray());
+    }
+
+    /**
+     * Create and/or open a database that will be used for reading and writing.
+     * Once opened successfully, the database is cached, so you can call this
      * method every time you need to write to the database.  Make sure to call
      * {@link #close} when you no longer need it.
      *
      * <p>Errors such as bad permissions or a full disk may cause this operation
      * to fail, but future attempts may succeed if the problem is fixed.</p>
      *
+     * @param password a UTF-16 Unicode password used to derive the key
      * @throws SQLiteException if the database cannot be opened for writing
      * @return a read/write database object valid until {@link #close} is called
      */
-
-    public synchronized SQLiteDatabase getWritableDatabase(String password) {
-      return getWritableDatabase(password.toCharArray());
-    }
-  
     public synchronized SQLiteDatabase getWritableDatabase(char[] password) {
         if (mDatabase != null && mDatabase.isOpen() && !mDatabase.isReadOnly()) {
             return mDatabase;  // The database is already open for business
@@ -121,17 +193,17 @@ public abstract class SQLiteOpenHelper {
             mIsInitializing = true;
             if (mName == null) {
                 db = SQLiteDatabase.create(null, password);
-                
+
             } else {
                 String path = mContext.getDatabasePath(mName).getPath();
-                
+
                 File dbPathFile = new File (path);
                 if (!dbPathFile.exists())
                 	dbPathFile.getParentFile().mkdirs();
-                
+
                 db = SQLiteDatabase.openOrCreateDatabase(path, password, mFactory, mHook);
             }
-            
+
 
             int version = db.getVersion();
             if (version != mNewVersion) {
@@ -168,6 +240,79 @@ public abstract class SQLiteOpenHelper {
     }
 
     /**
+     * Create and/or open a database. This will be the same object returned by
+     * {@link #getWritableDatabase} unless some problem, such as a full disk,
+     * requires the database to be opened read-only. In that case, a read-only
+     * database object will be returned. If the problem is fixed, a future call
+     * to {@link #getWritableDatabase} may succeed, in which case the read-only
+     * database object will be closed and the read/write object will be returned
+     * in the future.
+     * <p>
+     * With this method, the key is used directly for encryption. Be sure to
+     * derive your key using a strong key derivation method! If you are in
+     * doubt, use {@link #getReadableDatabase(char[])} which triggers a key to
+     * be derived from the supplied password.
+     *
+     * @param key an AES key used directly as the encryption key
+     * @throws SQLiteException if the database cannot be opened
+     * @return a database object valid until {@link #getWritableDatabase} or
+     *         {@link #close} is called.
+     * @see #getReadableDatabase(char[])
+     * @see #getReadableDatabase(byte[])
+     */
+    public synchronized SQLiteDatabase getReadableDatabase(SecretKey key) {
+        return getReadableDatabase(key.getEncoded());
+    }
+
+    /**
+     * Create and/or open a database. This will be the same object returned by
+     * {@link #getWritableDatabase} unless some problem, such as a full disk,
+     * requires the database to be opened read-only. In that case, a read-only
+     * database object will be returned. If the problem is fixed, a future call
+     * to {@link #getWritableDatabase} may succeed, in which case the read-only
+     * database object will be closed and the read/write object will be returned
+     * in the future.
+     * <p>
+     * With this method, the key is used directly for encryption. Be sure to
+     * derive your key using a strong key derivation method! If you are in
+     * doubt, use {@link #getReadableDatabase(char[])} which triggers a key to
+     * be derived from the supplied password.
+     *
+     * @param key an AES key used directly as the encryption key
+     * @throws SQLiteException if the database cannot be opened
+     * @return a database object valid until {@link #getWritableDatabase} or
+     *         {@link #close} is called.
+     * @see #getReadableDatabase(char[])
+     * @see #getReadableDatabase(SecretKey)
+     */
+    public synchronized SQLiteDatabase getReadableDatabase(byte[] rawKey) {
+        return getReadableDatabase(DatabaseUtils.encodeRawKey(rawKey));
+    }
+
+    /**
+     * Create and/or open a database. This will be the same object returned by
+     * {@link #getWritableDatabase} unless some problem, such as a full disk,
+     * requires the database to be opened read-only. In that case, a read-only
+     * database object will be returned. If the problem is fixed, a future call
+     * to {@link #getWritableDatabase} may succeed, in which case the read-only
+     * database object will be closed and the read/write object will be returned
+     * in the future.
+     * <p>
+     * {@link #getReadbleDatabase(char[])} is the preferred version of this
+     * method because a {@code char[]} can be zeroed out after use. A
+     * {@code String} is immutable.
+     *
+     * @param password a Unicode string used to derive the key
+     * @throws SQLiteException if the database cannot be opened
+     * @return a database object valid until {@link #getWritableDatabase} or
+     *         {@link #close} is called.
+     * @see #getReadableDatabase(char[])
+     */
+    public synchronized SQLiteDatabase getReadableDatabase(String password) {
+        return getReadableDatabase(password.toCharArray());
+    }
+
+    /**
      * Create and/or open a database.  This will be the same object returned by
      * {@link #getWritableDatabase} unless some problem, such as a full disk,
      * requires the database to be opened read-only.  In that case, a read-only
@@ -176,14 +321,11 @@ public abstract class SQLiteOpenHelper {
      * database object will be closed and the read/write object will be returned
      * in the future.
      *
+     * @param password a UTF-16 Unicode password used to derive the key
      * @throws SQLiteException if the database cannot be opened
      * @return a database object valid until {@link #getWritableDatabase}
      *     or {@link #close} is called.
      */
-    public synchronized SQLiteDatabase getReadableDatabase(String password) {
-      return getReadableDatabase(password.toCharArray());
-    }
-  
     public synchronized SQLiteDatabase getReadableDatabase(char[] password) {
         if (mDatabase != null && mDatabase.isOpen()) {
             return mDatabase;  // The database is already open for business
@@ -206,7 +348,7 @@ public abstract class SQLiteOpenHelper {
             String path = mContext.getDatabasePath(mName).getPath();
             File databasePath = new File(path);
             File databasesDirectory = new File(mContext.getDatabasePath(mName).getParent());
-            
+
             if(!databasesDirectory.exists()){
                 databasesDirectory.mkdirs();
             }

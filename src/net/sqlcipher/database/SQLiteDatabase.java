@@ -16,12 +16,20 @@
 
 package net.sqlcipher.database;
 
-import net.sqlcipher.Cursor;
+import android.content.ContentValues;
+import android.content.Context;
+import android.os.Debug;
+import android.os.SystemClock;
+import android.text.TextUtils;
+import android.util.Config;
+import android.util.Log;
+import android.util.Pair;
+
 import net.sqlcipher.CrossProcessCursorWrapper;
+import net.sqlcipher.Cursor;
 import net.sqlcipher.DatabaseUtils;
 import net.sqlcipher.SQLException;
 import net.sqlcipher.database.SQLiteDebug.DbStats;
-import net.sqlcipher.database.SQLiteDatabaseHook;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -41,16 +49,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.zip.ZipInputStream;
 
-import android.content.ContentValues;
-
-import android.content.Context;
-
-import android.os.Debug;
-import android.os.SystemClock;
-import android.text.TextUtils;
-import android.util.Config;
-import android.util.Log;
-import android.util.Pair;
+import javax.crypto.SecretKey;
 
 /**
  * Exposes methods to manage a SQLite database.
@@ -76,14 +75,72 @@ public class SQLiteDatabase extends SQLiteClosable {
         return native_status(operation, reset);
     }
 
+    /**
+     * Change the password used to encrypt the database. The database must be
+     * unlocked already.
+     *
+     * @see #changePassword(char[])
+     * @see #changeKey(byte[])
+     * @see #changeKey(SecretKey)
+     * @param {@code password} string
+     * @throws SQLiteException
+     */
     public void changePassword(String password) throws SQLiteException {
       native_rekey(password);
     }
 
+    /**
+     * Change the password used to encrypt the database. The database must be
+     * unlocked already. This expects the UTF-16 Unicode {@code char} values.
+     * Using a {@code char[]} is preferable to a {@code String} because a
+     * {@code char[]} can be zeroed out after it is no longer needed, while a
+     * {@code String} is immutable in Java.
+     *
+     * @param {@code password} Unicode chars
+     * @throws SQLiteException
+     * @see #changeKey(byte[])
+     * @see #changeKey(SecretKey)
+     */
     public void changePassword(char[] password) throws SQLiteException {
       native_rekey(password);
     }
-  
+
+    /**
+     * Change the key used to encrypt the database. The database must be
+     * unlocked already. This expects the raw AES key as 32 bytes, which is then
+     * directly used. It is not a password that will then be used to derive a
+     * key, like with {@link #changePassword(char[])} and
+     * {@link #changePassword(String)}. Also, a {@code byte[]} can be zeroed out
+     * when it is no longer needed. This method and
+     * {@link #changeKey(SecretKey)} were designed to be used with the CacheWord
+     * library.
+     *
+     * @param {@code rawKey} the raw AES key
+     * @throws SQLiteException, IllegalArgumentException
+     * @see #changePassword(char[])
+     * @see #changeKey(SecretKey)
+     */
+    public void changeKey(byte[] rawKey) throws SQLiteException {
+        native_rekey(DatabaseUtils.encodeRawKey(rawKey));
+    }
+
+    /**
+     * Change the key used to encrypt the database. The database must be
+     * unlocked already. This expects the raw AES key as a {@link SecretKey}
+     * instance here to be passed directly to the underlying database layer. It
+     * is not a password that will then be used to derive a key, like with
+     * {@link #changePassword(String)}. This method was designed to be used with
+     * the CacheWord library.
+     *
+     * @param {@code key} the raw AES key
+     * @throws SQLiteException, IllegalArgumentException
+     * @see #changePassword(char[])
+     * @see #changeKey(byte[])
+     */
+    public void changeKey(SecretKey key) {
+        changeKey(key.getEncoded());
+    }
+
     private static void loadICUData(Context context, File workingDir) {
 
         try {
@@ -2434,7 +2491,7 @@ public class SQLiteDatabase extends SQLiteClosable {
 
     private native void native_key(char[] key) throws SQLException;
     private native void native_key(String key) throws SQLException;
-  
+
     private native void native_rekey(String key) throws SQLException;
     private native void native_rekey(char[] key) throws SQLException;
 }
